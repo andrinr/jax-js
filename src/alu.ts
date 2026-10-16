@@ -1078,9 +1078,36 @@ export class AluExp implements FpHashable {
     context: Record<string, any>,
     globals?: (gid: number, bufidx: number) => any,
   ): number {
+    return this.#evaluate(context, globals, new Map());
+  }
+
+  /**
+   * Evaluate with a cache of already computed subexpressions, so each node of
+   * the DAG is evaluated at most once instead of once per path to it.
+   */
+  #evaluate(
+    context: Record<string, any>,
+    globals: ((gid: number, bufidx: number) => any) | undefined,
+    memo: Map<AluExp, number>,
+  ): number {
+    if (this.src.length === 0)
+      return this.#evaluateNode(context, globals, memo);
+    let value = memo.get(this);
+    if (value === undefined) {
+      value = this.#evaluateNode(context, globals, memo);
+      memo.set(this, value);
+    }
+    return value;
+  }
+
+  #evaluateNode(
+    context: Record<string, any>,
+    globals: ((gid: number, bufidx: number) => any) | undefined,
+    memo: Map<AluExp, number>,
+  ): number {
     if (AluGroup.Binary.has(this.op) || AluGroup.Compare.has(this.op)) {
-      const x = this.src[0].evaluate(context, globals);
-      const y = this.src[1].evaluate(context, globals);
+      const x = this.src[0].#evaluate(context, globals, memo);
+      const y = this.src[1].#evaluate(context, globals, memo);
       switch (this.op) {
         case AluOp.Add:
           return this.dtype === DType.Bool ? Number(x || y) : x + y;
@@ -1117,7 +1144,7 @@ export class AluExp implements FpHashable {
     }
 
     if (AluGroup.Unary.has(this.op)) {
-      const x = this.src[0].evaluate(context, globals);
+      const x = this.src[0].#evaluate(context, globals, memo);
       switch (this.op) {
         case AluOp.BitCount: {
           let value = x >>> 0;
@@ -1190,12 +1217,12 @@ export class AluExp implements FpHashable {
 
     switch (this.op) {
       case AluOp.Where:
-        return this.src[0].evaluate(context, globals)
-          ? this.src[1].evaluate(context, globals)
-          : this.src[2].evaluate(context, globals);
+        return this.src[0].#evaluate(context, globals, memo)
+          ? this.src[1].#evaluate(context, globals, memo)
+          : this.src[2].#evaluate(context, globals, memo);
       case AluOp.Threefry2x32: {
         const [k0, k1, c0, c1] = this.src.map((x) =>
-          x.evaluate(context, globals),
+          x.#evaluate(context, globals, memo),
         );
         const [x0, x1] = threefry2x32(k0, k1, c0, c1);
         if (this.arg === "xor") return (x0 ^ x1) >>> 0;
@@ -1218,7 +1245,7 @@ export class AluExp implements FpHashable {
       case AluOp.GlobalIndex: {
         if (!globals) throw new Error("Missing globals function");
         const gid: number = this.arg[0];
-        const bufidx = this.src[0].evaluate(context, globals);
+        const bufidx = this.src[0].#evaluate(context, globals, memo);
         return globals(gid, bufidx);
       }
       case AluOp.GlobalView: {
@@ -1227,8 +1254,8 @@ export class AluExp implements FpHashable {
         const gid: number = this.arg[0];
         const st: ShapeTracker = this.arg[1];
         const [iexpr, vexpr] = st.toAluExp(this.src);
-        if (vexpr.evaluate(context, globals)) {
-          const bufidx = iexpr.evaluate(context, globals);
+        if (vexpr.#evaluate(context, globals, memo)) {
+          const bufidx = iexpr.#evaluate(context, globals, memo);
           return globals(gid, bufidx);
         } else {
           return 0;

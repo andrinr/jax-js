@@ -319,3 +319,56 @@ test("AluOp.Ceil", () => {
   const e3 = AluExp.ceil(AluExp.f32(0.0));
   expect(e3.evaluate({})).toBe(0);
 });
+
+test("AluExp.evaluate computes shared subexpressions once", () => {
+  // Each step uses the previous value two or three times, so evaluating every
+  // path through the DAG separately would take about 2.5^24 steps.
+  const depth = 24;
+  let loads = 0;
+  const globals = (gid: number, bufidx: number) => {
+    loads++;
+    return [-1.5, -0.25, 0.5, 2][bufidx];
+  };
+  const x = AluExp.globalIndex(
+    DType.Float32,
+    0,
+    4,
+    AluExp.variable(DType.Int32, "idx"),
+  );
+  let y = x;
+  for (let i = 0; i < depth; i++) {
+    if (i % 2 === 0) {
+      y = AluExp.add(AluExp.sin(y), AluExp.cos(y));
+    } else {
+      const sq = AluExp.mul(y, y);
+      y = AluExp.where(AluExp.cmplt(y, AluExp.f32(1)), sq, AluExp.sub(y, sq));
+    }
+  }
+
+  for (let idx = 0; idx < 4; idx++) {
+    let r = globals(0, idx);
+    for (let i = 0; i < depth; i++) {
+      if (i % 2 === 0) r = Math.sin(r) + Math.cos(r);
+      else r = r < 1 ? r * r : r - r * r;
+    }
+    loads = 0;
+    expect(y.evaluate({ idx }, globals)).toBeCloseTo(r, 10);
+    expect(loads).toBe(1);
+  }
+});
+
+test("AluExp.evaluate does not evaluate the untaken where branch", () => {
+  const globals = (gid: number, bufidx: number) => {
+    if (bufidx !== 0) throw new Error("out of bounds: " + bufidx);
+    return 5;
+  };
+  const idx = AluExp.variable(DType.Int32, "idx");
+  const load = AluExp.globalIndex(DType.Int32, 0, 1, idx);
+  const e = AluExp.where(
+    AluExp.cmplt(idx, AluExp.i32(1)),
+    AluExp.add(load, load),
+    AluExp.i32(-1),
+  );
+  expect(e.evaluate({ idx: 0 }, globals)).toBe(10);
+  expect(e.evaluate({ idx: 3 }, globals)).toBe(-1);
+});
