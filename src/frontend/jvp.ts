@@ -182,12 +182,7 @@ function padAxis(a: Tracer, axis: number, p: Pair): Tracer {
   return pad(a, pads);
 }
 
-/**
- * Tangent weights `[wx, wy]` for max/min of `x` and `y`, given whether `x` is
- * strictly not selected. Tied operands are weighted 0.5 each, to match JAX's
- * `_balanced_eq`. Each tangent is then scaled once by a primal-only weight, so
- * chained max/min do not duplicate tangent expressions.
- */
+/** Tangent weights `[wx, wy]` for max/min, splitting ties evenly like JAX. */
 function tieWeights(xLoses: Tracer, tie: Tracer, dtype: DType): Tracer[] {
   const wx = cast(where(tie, 0.5, where(xLoses, 0.0, 1.0)), dtype);
   return [wx.ref, cast(1, dtype).sub(wx)];
