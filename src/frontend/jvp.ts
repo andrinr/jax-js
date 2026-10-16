@@ -1,4 +1,4 @@
-import { AluOp, isFloatDtype } from "../alu";
+import { AluOp, DType, isFloatDtype } from "../alu";
 import { Pair } from "../shape";
 import {
   JsTree,
@@ -22,6 +22,7 @@ import {
   cos,
   currentTraceLevel,
   dot,
+  equal,
   erf,
   erfc,
   exp,
@@ -181,6 +182,17 @@ function padAxis(a: Tracer, axis: number, p: Pair): Tracer {
   return pad(a, pads);
 }
 
+/**
+ * Tangent weights `[wx, wy]` for max/min of `x` and `y`, given whether `x` is
+ * strictly not selected. Tied operands are weighted 0.5 each, to match JAX's
+ * `_balanced_eq`. Each tangent is then scaled once by a primal-only weight, so
+ * chained max/min do not duplicate tangent expressions.
+ */
+function tieWeights(xLoses: Tracer, tie: Tracer, dtype: DType): Tracer[] {
+  const wx = cast(where(tie, 0.5, where(xLoses, 0.0, 1.0)), dtype);
+  return [wx.ref, cast(1, dtype).sub(wx)];
+}
+
 const jvpRules: { [P in Primitive]: JvpRule<P> } = {
   [Primitive.Add]: linearTangentsJvp(Primitive.Add),
   [Primitive.Mul]: bilinearTangentsJvp(Primitive.Mul),
@@ -200,10 +212,14 @@ const jvpRules: { [P in Primitive]: JvpRule<P> } = {
     return [[mod(x, y)], [dx.sub(dy.mul(q))]];
   },
   [Primitive.Min]([x, y], [dx, dy]) {
-    return [[min(x.ref, y.ref)], [where(less(y, x), dy, dx)]];
+    const tie = equal(x.ref, y.ref);
+    const [wx, wy] = tieWeights(less(y.ref, x.ref), tie, dx.dtype);
+    return [[min(x, y)], [dx.mul(wx).add(dy.mul(wy))]];
   },
   [Primitive.Max]([x, y], [dx, dy]) {
-    return [[max(x.ref, y.ref)], [where(less(x, y), dy, dx)]];
+    const tie = equal(x.ref, y.ref);
+    const [wx, wy] = tieWeights(less(x.ref, y.ref), tie, dx.dtype);
+    return [[max(x, y)], [dx.mul(wx).add(dy.mul(wy))]];
   },
   [Primitive.BitCombine]: zeroTangentsJvp(Primitive.BitCombine),
   [Primitive.BitShift]: zeroTangentsJvp(Primitive.BitShift),

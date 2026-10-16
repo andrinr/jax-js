@@ -3028,7 +3028,7 @@ export function expm1(x: ArrayLike): Array {
 
   const cutoff = x.dtype === DType.Float64 ? 0.01 : 0.1;
   const useSeries = absolute(x.ref).lessEqual(cutoff);
-  const seriesX = clip(x.ref, -cutoff, cutoff);
+  const seriesX = where(useSeries.ref, x.ref, 0);
   // Evaluate through x^7 using Horner's method. At the cutoff, omitted terms
   // are below the dtype's precision.
   const series = seriesX.ref
@@ -3054,7 +3054,7 @@ export function log1p(x: ArrayLike): Array {
 
   const cutoff = x.dtype === DType.Float64 ? 0.01 : 0.2;
   const useSeries = absolute(x.ref).lessEqual(cutoff);
-  const seriesX = clip(x.ref, -cutoff, cutoff);
+  const seriesX = where(useSeries.ref, x.ref, 0);
   // Evaluate through x^10 using Horner's method. At the cutoff, omitted terms
   // are below the dtype's precision.
   const series = seriesX.ref

@@ -2738,6 +2738,28 @@ suite.each(devices)("device:%s", (device) => {
       expect(dz.js()).toEqual([1, 0, 0]);
     });
 
+    test("splits gradient evenly at ties, like JAX", () => {
+      const g1 = grad((x: np.Array) => np.minimum(x, 1));
+      expect(g1(np.array(1)).js()).toEqual(0.5);
+      const g2 = grad((x: np.Array) => np.minimum(1, x));
+      expect(g2(np.array(1)).js()).toEqual(0.5);
+      const [gx, gy] = grad((x: np.Array, y: np.Array) => np.minimum(x, y), {
+        argnums: [0, 1],
+      })(np.array(2), np.array(2));
+      expect(gx.js()).toEqual(0.5);
+      expect(gy.js()).toEqual(0.5);
+      // Both operands are the same value, so the halves add back up to 1.
+      const g3 = grad((x: np.Array) => np.minimum(x.ref, x));
+      expect(g3(np.array(1)).js()).toEqual(1);
+    });
+
+    test("splits gradient at ties under jit and vmap", () => {
+      const g = grad((x: np.Array) => np.minimum(x, 1));
+      expect(jit(g)(np.array(1)).js()).toEqual(0.5);
+      expect(vmap(g)(np.array([0, 1, 2])).js()).toEqual([1, 0.5, 0]);
+      expect(jit(vmap(g))(np.array([0, 1, 2])).js()).toEqual([1, 0.5, 0]);
+    });
+
     test("minimum of bools", () => {
       const x = np.array([true, false, true]);
       const y = np.array([false, false, true]);
@@ -2804,6 +2826,44 @@ suite.each(devices)("device:%s", (device) => {
       );
       expect(z.js()).toEqual([4, 2, 3]);
       expect(dz.js()).toEqual([0, 0, 1]);
+    });
+
+    test("splits gradient evenly at ties, like JAX", () => {
+      const g1 = grad((x: np.Array) => np.maximum(x, 1));
+      expect(g1(np.array(1)).js()).toEqual(0.5);
+      const g2 = grad((x: np.Array) => np.maximum(1, x));
+      expect(g2(np.array(1)).js()).toEqual(0.5);
+      const [gx, gy] = grad((x: np.Array, y: np.Array) => np.maximum(x, y), {
+        argnums: [0, 1],
+      })(np.array(2), np.array(2));
+      expect(gx.js()).toEqual(0.5);
+      expect(gy.js()).toEqual(0.5);
+      // Both operands are the same value, so the halves add back up to 1.
+      const g3 = grad((x: np.Array) => np.maximum(x.ref, x));
+      expect(g3(np.array(1)).js()).toEqual(1);
+    });
+
+    test("splits gradient at ties under jit and vmap", () => {
+      const g = grad((x: np.Array) => np.maximum(x, 1));
+      expect(jit(g)(np.array(1)).js()).toEqual(0.5);
+      expect(vmap(g)(np.array([0, 1, 2])).js()).toEqual([0, 0.5, 1]);
+      expect(jit(vmap(g))(np.array([0, 1, 2])).js()).toEqual([0, 0.5, 1]);
+    });
+
+    test("chained maximum/minimum stays fast under jit", () => {
+      // Each tie halves the gradient: d/dx at x=1 is 0.5^n, as in JAX.
+      const n = 16;
+      const f = (x: np.Array) => {
+        for (let i = 0; i < n; i++) {
+          x = i % 2 === 0 ? np.maximum(x, 1) : np.minimum(x, 1);
+        }
+        return x;
+      };
+      const start = performance.now();
+      const dx = jit(grad(f))(np.array(1));
+      expect(dx.js()).toEqual(0.5 ** n);
+      // The JVP adds a constant number of ops per max/min, so jit stays fast.
+      expect(performance.now() - start).toBeLessThan(5000);
     });
   });
 
@@ -3395,7 +3455,7 @@ suite.each(devices)("device:%s", (device) => {
     });
 
     test("has the correct gradient", () => {
-      const values = [-0.5, -0.001, 0, 0.001, 0.5];
+      const values = [-0.5, -0.2, -0.001, 0, 0.001, 0.2, 0.5];
       const dx = grad((x: np.Array) => np.log1p(x).sum())(np.array(values));
       expect(dx).toBeAllclose(values.map((x) => 1 / (1 + x)));
     });
@@ -3568,6 +3628,21 @@ suite.each(devices)("device:%s", (device) => {
       const dx = grad((x: np.Array) => np.min(x))(x);
       expect(dx.js()).toEqual([0, 0.5, 0, 0.5]); // Gradient is 1 at the minimum
     });
+
+    test("splits grad of min evenly across ties along an axis", () => {
+      const x = np.array([
+        [1, 1, 2],
+        [3, 0, 0],
+      ]);
+      const expected = [
+        [0.5, 0.5, 0],
+        [0, 0.5, 0.5],
+      ];
+      const f = (x: np.Array) => np.min(x, 1).sum();
+      expect(grad(f)(x.ref).js()).toEqual(expected);
+      expect(jit(grad(f))(x.ref).js()).toEqual(expected);
+      expect(vmap(grad((r: np.Array) => np.min(r)))(x).js()).toEqual(expected);
+    });
   });
 
   suite("jax.numpy.max()", () => {
@@ -3599,6 +3674,21 @@ suite.each(devices)("device:%s", (device) => {
       const x = np.array([10, 3, 4, 10]);
       const dx = grad((x: np.Array) => np.max(x))(x);
       expect(dx.js()).toEqual([0.5, 0, 0, 0.5]); // Gradient is 1 at the maximum
+    });
+
+    test("splits grad of max evenly across ties along an axis", () => {
+      const x = np.array([
+        [2, 2, 1],
+        [0, 3, 3],
+      ]);
+      const expected = [
+        [0.5, 0.5, 0],
+        [0, 0.5, 0.5],
+      ];
+      const f = (x: np.Array) => np.max(x, 1).sum();
+      expect(grad(f)(x.ref).js()).toEqual(expected);
+      expect(jit(grad(f))(x.ref).js()).toEqual(expected);
+      expect(vmap(grad((r: np.Array) => np.max(r)))(x).js()).toEqual(expected);
     });
   });
 
