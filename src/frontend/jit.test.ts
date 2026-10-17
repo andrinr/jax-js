@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 
 import { defaultDevice, getBackend, init } from "../backend";
 import { jit, numpy as np } from "../index";
@@ -9,9 +9,9 @@ test("splits kernels that exceed maxArgs when an input is already black", () => 
   // WebGPU and WebGL allow 7-8 buffers per kernel. Lower the limit on the cpu
   // backend so a small program has to be split.
   defaultDevice("cpu");
-  const backend = getBackend("cpu") as { maxArgs: number };
-  const maxArgs = backend.maxArgs;
-  backend.maxArgs = 3;
+  const maxArgs = vi
+    .spyOn(getBackend("cpu"), "maxArgs", "get")
+    .mockReturnValue(3);
   try {
     // The where() sees 4 buffers: w through its condition, and a, b, c through
     // y and sin(y). The condition is marked black first, which is not enough,
@@ -30,6 +30,6 @@ test("splits kernels that exceed maxArgs when an input is already black", () => 
     expect(x0).toBeCloseTo(9);
     expect(x1).toBeCloseTo(Math.sin(12));
   } finally {
-    backend.maxArgs = maxArgs;
+    maxArgs.mockRestore();
   }
 });

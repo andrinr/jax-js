@@ -1065,7 +1065,7 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
       // unique dependencies, then the one with the most dependencies. Inputs
       // that are already black are skipped: marking them again changes
       // nothing, so we would backtrack to the same state forever.
-      let maxUniqueDeps = 0;
+      let maxUniqueDeps = -1;
       let assocInput = -1;
       for (let i = 0; i < eqn.inputs.length; i++) {
         const input = eqn.inputs[i];
@@ -1079,7 +1079,6 @@ function splitGraphDataflow(backend: Backend, jaxpr: Jaxpr): Set<Var> {
             if (depCounter.get(dep) === 1) uniqueDeps++;
           }
           if (
-            assocInput === -1 ||
             uniqueDeps > maxUniqueDeps ||
             (uniqueDeps === maxUniqueDeps &&
               deps[i].size > deps[assocInput].size)
